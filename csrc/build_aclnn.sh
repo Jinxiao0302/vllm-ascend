@@ -3,6 +3,12 @@
 ROOT_DIR=$1
 SOC_VERSION=$2
 
+if [ -z "$ROOT_DIR" ]; then
+    ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    export ROOT_DIR
+    echo "[build_aclnn] Auto-detected ROOT_DIR=${ROOT_DIR}"
+fi
+
 log() {
     echo "[build_aclnn] $*"
 }
