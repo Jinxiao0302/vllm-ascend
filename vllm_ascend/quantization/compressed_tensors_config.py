@@ -361,6 +361,9 @@ class AscendCompressedTensorsConfig(QuantizationConfig):
             if self._is_dynamic_token_w4a8(weight_quant, input_quant):
                 return "W4A8_DYNAMIC"
 
+        if self._is_w8a16_fp8(weight_quant, input_quant):
+            return "W8A16_FP8"
+
         if self._is_w4a16(weight_quant, input_quant):
             return "W4A16"
 
@@ -426,6 +429,21 @@ class AscendCompressedTensorsConfig(QuantizationConfig):
         is_static = not weight_quant.dynamic
 
         return input_quant_none and is_4_bits and is_group and is_static
+
+    def _is_w8a16_fp8(self, weight_quant: "QuantizationArgs", input_quant: Optional["QuantizationArgs"]) -> bool:
+        if weight_quant is None:
+            return False
+
+        if weight_quant.type != QuantizationType.FLOAT:
+            return False
+
+        input_quant_none = input_quant is None
+        is_8_bits = weight_quant.num_bits == 8
+        is_channel = weight_quant.strategy == QuantizationStrategy.CHANNEL.value
+        is_static = not weight_quant.dynamic
+        is_symmetric = weight_quant.symmetric
+
+        return input_quant_none and is_8_bits and is_channel and is_static and is_symmetric
 
     def apply_vllm_mapper(self, hf_to_vllm_mapper: "WeightsMapper"):
         self.target_scheme_map = hf_to_vllm_mapper.apply_dict(self.target_scheme_map)

@@ -51,6 +51,7 @@ from .w8a8_pdmix import AscendW8A8PDMixFusedMoeMethod, AscendW8A8PDMixLinearMeth
 from .w8a8_static import AscendW8A8LinearMethod
 from .w8a8fp8_dynamic import AscendW8A8FP8DynamicFusedMoEMethod, AscendW8A8FP8DynamicLinearMethod
 from .w8a16 import AscendW8A16LinearMethod
+from .w8a16_fp8 import AscendW8A16FP8FusedMoEMethod, AscendW8A16FP8LinearMethod
 
 
 def is_mx_quant_type(instance: Any) -> bool:
@@ -87,6 +88,8 @@ __all__ = [
     "AscendW8A8PDMixLinearMethod",
     "AscendW8A8PDMixFusedMoeMethod",
     "AscendW8A16LinearMethod",
+    "AscendW8A16FP8LinearMethod",
+    "AscendW8A16FP8FusedMoEMethod",
     "AscendW4A8DynamicLinearMethod",
     "AscendW4A8DynamicFusedMoEMethod",
     "AscendW4A16FusedMoEMethod",
