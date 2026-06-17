@@ -92,6 +92,7 @@ class MoEQuantParams:
             QuantType.MXFP4,
             QuantType.W4A8MXFP,
             QuantType.W8A8FP8,
+            QuantType.W8A16FP8,
         )
 
 
