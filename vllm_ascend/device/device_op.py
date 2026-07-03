@@ -23,6 +23,7 @@ from vllm_ascend.device.mxfp_compat import (
     QUANT_DTYPES,
     SCALE_DTYPES,
 )
+from vllm_ascend.quantization.quant_type import QuantType
 from vllm_ascend.utils import AscendDeviceType, get_ascend_device_type
 
 
@@ -104,7 +105,7 @@ class BaseDeviceAdaptor:
             raise RuntimeError("MXFP MoE quantization is only supported on Ascend A5.")
 
         if dynamic_scale is None:
-            return torch_npu.npu_dynamic_quant(hidden_states)
+            return torch_npu.npu_dynamic_quant(hidden_states, dst_type=act_quant_type)
 
         return hidden_states, dynamic_scale
 
@@ -117,10 +118,11 @@ class BaseDeviceAdaptor:
         weight_scale: torch.Tensor,
         x_scale: torch.Tensor,
         bias=None,
-        swiglu_limit: int = 0,
         use_mxfp_quant: bool = False,
         act_quant_type: torch.dtype | int = torch.float8_e4m3fn,
         weight_quant_type: torch.dtype | int = torch.float8_e4m3fn,
+        swiglu_limit: float = 0.0,
+        mxfp_quant_dtype: QuantType | None = None,
     ):
         if use_mxfp_quant:
             raise RuntimeError("MXFP MoE quantization is only supported on Ascend A5.")
@@ -172,6 +174,7 @@ class BaseDeviceAdaptor:
         use_mxfp_quant: bool = False,
         bias=None,
         fallback_output_dtype: torch.dtype | None = None,
+        mxfp_quant_dtype: QuantType | None = None,
     ) -> torch.Tensor:
         if use_mxfp_quant:
             raise RuntimeError("MXFP MoE quantization is only supported on Ascend A5.")
@@ -416,10 +419,11 @@ class A5DeviceAdaptor(BaseDeviceAdaptor):
         weight_scale: torch.Tensor,
         x_scale: torch.Tensor,
         bias=None,
-        swiglu_limit: int = 0,
         use_mxfp_quant: bool = False,
         act_quant_type: torch.dtype | int = torch.float8_e4m3fn,
         weight_quant_type: torch.dtype | int = torch.float8_e4m3fn,
+        swiglu_limit: float = 0.0,
+        mxfp_quant_dtype: QuantType | None = None,
     ):
         if not use_mxfp_quant:
             return torch_npu.npu_grouped_matmul_swiglu_quant_v2(
@@ -433,21 +437,34 @@ class A5DeviceAdaptor(BaseDeviceAdaptor):
                 use_mxfp_quant=False,
             )
 
-        out, out_scale = torch_npu.npu_grouped_matmul_swiglu_quant_v2(
-            x=x,
-            weight=[weight],
-            group_list=group_list,
-            weight_scale=[weight_scale],
-            x_scale=x_scale,
-            dequant_mode=2,
-            quant_mode=2,
-            dequant_dtype=torch.float32,
-            quant_dtype=act_quant_type,
-            x_dtype=act_quant_type if act_quant_type in QUANT_DTYPES else None,
-            weight_dtype=weight_quant_type if weight_quant_type in QUANT_DTYPES else None,
-            weight_scale_dtype=FLOAT8_E8M0FNU_DTYPE,
-            x_scale_dtype=FLOAT8_E8M0FNU_DTYPE,
-        )
+        elif mxfp_quant_dtype == QuantType.W8A16FP8:
+            hidden_states = torch_npu.npu_grouped_matmul(
+                x=[x],
+                weight=[weight],
+                antiquant_scale=[weight_scale],
+                group_list=group_list,
+                split_item=3,
+                group_type=0,
+                output_dtype=torch.bfloat16,
+            )[0]
+            out = torch_npu.npu_swiglu(hidden_states)
+            out_scale = None
+        else:
+            out, out_scale = torch_npu.npu_grouped_matmul_swiglu_quant_v2(
+                x=x,
+                weight=[weight],
+                group_list=group_list,
+                weight_scale=[weight_scale],
+                x_scale=x_scale,
+                dequant_mode=2,
+                quant_mode=2,
+                dequant_dtype=torch.float32,
+                quant_dtype=act_quant_type,
+                x_dtype=act_quant_type if act_quant_type in QUANT_DTYPES else None,
+                weight_dtype=weight_quant_type if weight_quant_type in QUANT_DTYPES else None,
+                weight_scale_dtype=FLOAT8_E8M0FNU_DTYPE,
+                x_scale_dtype=FLOAT8_E8M0FNU_DTYPE,
+            )
         return out, A5DeviceAdaptor.maybe_normalize_mxfp_scale_layout(out_scale), None
 
     @staticmethod
@@ -505,6 +522,7 @@ class A5DeviceAdaptor(BaseDeviceAdaptor):
         use_mxfp_quant: bool = False,
         bias=None,
         fallback_output_dtype: torch.dtype | None = None,
+        mxfp_quant_dtype: QuantType | None = None,
     ) -> torch.Tensor:
         if not use_mxfp_quant:
             return BaseDeviceAdaptor.npu_grouped_matmul_gmm2(
@@ -542,6 +560,18 @@ class A5DeviceAdaptor(BaseDeviceAdaptor):
             raise ValueError(f"w2_scale must have a single tensor in MXFP path, but got {len(weight_scale)}.")
         gmm2_weight = weight if isinstance(weight, list) else [weight]
         gmm2_scale = weight_scale if isinstance(weight_scale, list) else [weight_scale]
+        if mxfp_quant_dtype == QuantType.W8A16FP8:
+            return torch_npu.npu_grouped_matmul(
+                x=[hidden_states],
+                weight=gmm2_weight,
+                antiquant_scale=gmm2_scale,
+                bias=bias,
+                split_item=3,
+                group_type=0,
+                group_list_type=group_list_type,
+                group_list=group_list,
+                output_dtype=torch.bfloat16,
+            )[0]
 
         return torch_npu.npu_grouped_matmul(
             x=[hidden_states],

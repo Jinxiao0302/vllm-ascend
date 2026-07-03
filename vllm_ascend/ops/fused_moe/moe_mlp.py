@@ -27,6 +27,7 @@ from vllm_ascend.device.mxfp_compat import (
 )
 from vllm_ascend.ops.activation import AscendSwigluOAIAndMul
 from vllm_ascend.ops.fused_moe.moe_runtime_args import MoEMlpComputeInput
+from vllm_ascend.quantization.quant_type import QuantType
 from vllm_ascend.utils import (
     dispose_tensor,
     enable_custom_op,
@@ -96,12 +97,13 @@ def quant_apply_mlp(
     fusion: bool = False,
     dynamic_eplb: bool = False,
     use_mxfp_quant: bool = False,
+    mxfp_quant_dtype: QuantType | None = None,
     act_quant_type: torch.dtype = torch.float8_e4m3fn,
     weight_quant_type: torch.dtype | None = None,
     scale_type: torch.dtype | None = None,
     per_token_scale_type: torch.dtype | None = None,
     use_bf16: bool = True,
-    swiglu_limit: int = 0,
+    swiglu_limit: float = 0.0,
     use_w4a8_per_channel_gmm_swiglu: bool = False,
 ) -> torch.Tensor:
     input_hidden_dtype = hidden_states.dtype
@@ -118,6 +120,9 @@ def quant_apply_mlp(
     if w1_offset is not None:
         unquantized_hidden_states = hidden_states
         quantized_hidden_states = None
+    elif mxfp_quant_dtype == QuantType.W8A16FP8:
+        quantized_hidden_states = None
+        pertoken_scale = None
     elif dynamic_scale is None:
         unquantized_hidden_states = hidden_states
         hidden_states, pertoken_scale = DeviceOperator.npu_dynamic_quant(
@@ -166,6 +171,7 @@ def quant_apply_mlp(
                 act_quant_type=act_quant_type,
                 weight_quant_type=weight_quant_type,
                 swiglu_limit=swiglu_limit,
+                mxfp_quant_dtype=mxfp_quant_dtype,
             )
             if quantized_hidden_states is not None:
                 dispose_tensor(quantized_hidden_states)
@@ -214,6 +220,7 @@ def quant_apply_mlp(
             use_mxfp_quant=use_mxfp_quant,
             bias=None,
             fallback_output_dtype=w2_scale[0].dtype if isinstance(w2_scale, list) else w2_scale.dtype,
+            mxfp_quant_dtype=mxfp_quant_dtype,
         )
     elif w1_offset is not None:
         # gmm1: gate_up_proj
@@ -289,6 +296,7 @@ def quant_apply_mlp(
                 act_quant_type=act_quant_type,
                 weight_quant_type=weight_quant_type,
                 swiglu_limit=swiglu_limit,
+                mxfp_quant_dtype=mxfp_quant_dtype,
             )
             if quantized_hidden_states is not None:
                 dispose_tensor(quantized_hidden_states)
@@ -337,6 +345,7 @@ def quant_apply_mlp(
             use_mxfp_quant=use_mxfp_quant,
             bias=bias2,
             fallback_output_dtype=_output_dtype,
+            mxfp_quant_dtype=mxfp_quant_dtype,
         )
     return hidden_states, before_gmm2_evt
 
@@ -352,7 +361,6 @@ def unquant_apply_mlp(
     group_list_type: int = 1,
     topk_scales: torch.Tensor | None = None,
     need_trans: bool = True,
-    swiglu_limit: int = 0,
 ) -> torch.Tensor:
     if need_trans:
         w1 = w1.transpose(1, 2)
@@ -372,12 +380,8 @@ def unquant_apply_mlp(
 
     if act_name == "swigluoai":
         num_experts, _, hidden_size = w1.shape
-        gate_up_out = AscendSwigluOAIAndMul.swiglu_oai_forward(gate_up_out.view(-1, hidden_size), limit=swiglu_limit)
+        gate_up_out = AscendSwigluOAIAndMul.swiglu_oai_forward(gate_up_out.view(-1, hidden_size))
     else:
-        if swiglu_limit > 0:
-            gate, up = gate_up_out.chunk(2, dim=-1)
-            gate.clamp_(max=swiglu_limit)
-            up.clamp_(min=-swiglu_limit, max=swiglu_limit)
         gate_up_out = torch_npu.npu_swiglu(gate_up_out)
 
     if topk_scales is not None:
@@ -433,7 +437,6 @@ def unified_apply_mlp(*, mlp_compute_input: MoEMlpComputeInput) -> torch.Tensor:
             group_list_type=group_list_type,
             topk_scales=topk_scales,
             need_trans=need_trans,
-            swiglu_limit=swiglu_limit,
         )
 
     assert w1_scale is not None and w2_scale is not None
@@ -443,12 +446,15 @@ def unified_apply_mlp(*, mlp_compute_input: MoEMlpComputeInput) -> torch.Tensor:
     per_token_scale_type = None
     use_bf16 = hidden_states.dtype == torch.bfloat16
     use_mxfp_quant = mlp_compute_input.quant.is_mxfp
+    mxfp_quant_dtype = mlp_compute_input.quant.quant_type
 
     if use_mxfp_quant:
         mxfp = mlp_compute_input.quant.mxfp
         assert mxfp is not None, "mlp_compute_input.quant.mxfp is required for MXFP quant types."
-        act_quant_type = mxfp.act_quant_type or act_quant_type
+        act_quant_type = mxfp.act_quant_type
         weight_quant_type = mxfp.weight_quant_type or weight_quant_type
+        if mxfp_quant_dtype == QuantType.W8A16FP8:
+            weight_quant_type = mxfp.weight_quant_type
         scale_type = mxfp.scale_dtype
         per_token_scale_type = mxfp.per_token_scale_dtype
         use_bf16 = mxfp.use_bf16
@@ -469,6 +475,7 @@ def unified_apply_mlp(*, mlp_compute_input: MoEMlpComputeInput) -> torch.Tensor:
         fusion=fusion,
         dynamic_eplb=dynamic_eplb,
         use_mxfp_quant=use_mxfp_quant,
+        mxfp_quant_dtype=mxfp_quant_dtype,
         act_quant_type=act_quant_type,
         weight_quant_type=weight_quant_type,
         scale_type=scale_type,
