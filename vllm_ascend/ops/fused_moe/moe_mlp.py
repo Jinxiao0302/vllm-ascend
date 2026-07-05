@@ -452,6 +452,8 @@ def unified_apply_mlp(*, mlp_compute_input: MoEMlpComputeInput) -> torch.Tensor:
         mxfp = mlp_compute_input.quant.mxfp
         assert mxfp is not None, "mlp_compute_input.quant.mxfp is required for MXFP quant types."
         act_quant_type = mxfp.act_quant_type
+        if mxfp_quant_dtype == QuantType.W8A16FP8:
+            act_quant_type = mxfp.act_quant_type
         weight_quant_type = mxfp.weight_quant_type or weight_quant_type
         if mxfp_quant_dtype == QuantType.W8A16FP8:
             weight_quant_type = mxfp.weight_quant_type

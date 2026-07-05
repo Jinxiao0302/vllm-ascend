@@ -172,6 +172,13 @@ class AscendW8A16FP8FusedMoEMethod(AscendMoEScheme):
         topk_weights = topk_weights.to(x.dtype)
 
         moe_comm_method = _EXTRA_CTX.moe_comm_method
+
+        print(f"[W8A16FP8-apply] w13_weight shape: {layer.w13_weight.shape}, dtype: {layer.w13_weight.dtype}")
+        print(f"[W8A16FP8-apply] w2_weight shape: {layer.w2_weight.shape}, dtype: {layer.w2_weight.dtype}")
+        #w13 = layer.w13_weight.transpose(1, 2).contiguous()
+        #w2 = layer.w2_weight.transpose(1, 2).contiguous()
+        #print(f"[W8A16FP8-apply] After transpose w13_weight shape: {w13.shape}, dtype: {w13.dtype}")
+        #print(f"[W8A16FP8-apply] After transpose w2_weight shape: {w2.shape}, dtype: {w2.dtype}")
         return moe_comm_method.fused_experts(
             fused_experts_input=build_fused_experts_input(
                 hidden_states=x,
@@ -202,19 +209,13 @@ class AscendW8A16FP8FusedMoEMethod(AscendMoEScheme):
     def process_weights_after_loading(self, layer):
         """Prepare weights for NPU grouped matmul.
 
-        Compared to W4A16-MXFP4, this is significantly simplified:
-        - No unpack (FP8 is native format)
-        - No NZ format cast (W8A16 uses ND only)
-        - No int4pack conversion
         - Only transpose + contiguous for per-channel antiquant_scale alignment
         """
         # w13_weight: [E, 2N, K] → [E, K, 2N] (transpose for per-channel dequant)
-        layer.w13_weight.data = layer.w13_weight.data.transpose(1, 2).contiguous()
 
-        # w2_weight: [E, H, I] → [E, I, H] (transpose for per-channel dequant)
-        layer.w2_weight.data = layer.w2_weight.data.transpose(1, 2).contiguous()
-
-        # Per-channel scale: antiquant_scale expects shape [g, n] = [E, N]
-        # Scale is already [E, N] from get_dynamic_quant_param, just ensure contiguous
+        layer.w13_weight.data = layer.w13_weight.data.contiguous()
+        layer.w2_weight.data = layer.w2_weight.data.contiguous()
+        print(f"[W8A16FP8-process_weights] w13_weight shape: {layer.w13_weight.shape}, dtype: {layer.w13_weight.dtype}")
+        print(f"[W8A16FP8-process_weights] w2_weight shape: {layer.w2_weight.shape}, dtype: {layer.w2_weight.dtype}")
         layer.w13_weight_scale.data = layer.w13_weight_scale.data.contiguous()
         layer.w2_weight_scale.data = layer.w2_weight_scale.data.contiguous()
