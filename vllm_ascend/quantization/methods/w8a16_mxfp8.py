@@ -212,10 +212,13 @@ class AscendW8A16FP8FusedMoEMethod(AscendMoEScheme):
         - Only transpose + contiguous for per-channel antiquant_scale alignment
         """
         # w13_weight: [E, 2N, K] → [E, K, 2N] (transpose for per-channel dequant)
+        layer.w13_weight.data = layer.w13_weight.data.transpose(1, 2)
+        layer.w2_weight.data = layer.w2_weight.data.transpose(1, 2)
 
-        layer.w13_weight.data = layer.w13_weight.data.contiguous()
-        layer.w2_weight.data = layer.w2_weight.data.contiguous()
-        print(f"[W8A16FP8-process_weights] w13_weight shape: {layer.w13_weight.shape}, dtype: {layer.w13_weight.dtype}")
-        print(f"[W8A16FP8-process_weights] w2_weight shape: {layer.w2_weight.shape}, dtype: {layer.w2_weight.dtype}")
         layer.w13_weight_scale.data = layer.w13_weight_scale.data.contiguous()
         layer.w2_weight_scale.data = layer.w2_weight_scale.data.contiguous()
+        
+        print(f"[process_weights after] w13_weight shape: {layer.w13_weight.shape}, dtype: {layer.w13_weight.dtype}")
+        print(f"[process_weights after] w2_weight shape: {layer.w2_weight.shape}, dtype: {layer.w2_weight.dtype}")
+        print(f"[process_weights after] w13_scale shape: {layer.w13_weight_scale.shape}, dtype: {layer.w13_weight_scale.dtype}")
+        print(f"[process_weights after] w2_scale shape: {layer.w2_weight_scale.shape}, dtype: {layer.w2_weight_scale.dtype}")
