@@ -94,7 +94,6 @@ def _build_mxfp_params(
         QuantType.W4A4MXFP,
         QuantType.W4A8MXFP,
         QuantType.W4A16MXFP,
-        QuantType.W8A16FP,
     ):
         return None
 
